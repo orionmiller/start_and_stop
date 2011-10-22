@@ -1,45 +1,54 @@
 # Author: Orion Miller (aomiller)
 
 CC = gcc
-CFLAGS = -g -Wall -Werror
+CFLAGS = -g -Wall -Werror -MD
 
 #Dependencies
 RCOPY_DEPEND = rcopy.c rcopy.h librcp.o
 SERVER_DEPEND = server.c server.h librcp.o
-LIB_RCP_DEPEND = librcp.c librcp.h safe.o #checksum.c checksum.h # cpe464.h libcpe464.1.2.a
+LIB_RCP_DEPEND = librcp.c librcp.h util.o #checksum.c checksum.h # cpe464.h libcpe464.1.2.a
 CPE_464_LIB_DEPEND = cpe464.h libcpe464.1.2.a
-SAFE_DEPEND = safe.c safe.h
+UTIL_DEPEND = util.c util.h
 
 #Sources
-RCOPY_SRCS = rcopy.c -l librcp.o
-SERVER_SRCS = server.c -l librcp.o
-LIB_RCP_SRCS = librcp.c -l safe.o #checksum.c
-SAFE_SRCS = safe.c
+RCOPY_SRCS = rcopy.c librcp.o
+SERVER_SRCS = server.c librcp.o
+LIB_RCP_SRCS = librcp.c util.o #checksum.c
+UTIL_SRCS = util.c
 
 
-all: server rcopy librcp.o safe.o
+all: rcopy server #server rcopy librcp.o util.o
 
-rcopy: $(RCOPY_DEPEND)
-	$(CC) $(CFLAGS) $(RCOPY_SRCS) -o $@
+rcopy: rcopy.* librcp.* util.*
+	$(CC) $(CFLAGS) rcopy.c librcp.c util.c ./libcpe464.1.2.a -o $@
 
-server: $(SERVER_DEPEND)
-	$(CC) $(CFLAGS) $(SERVER_SRCS) -o $@
+server: server.* librcp.* util.*
+	$(CC) $(CFLAGS) server.c librcp.c util.c -lpthread ./libcpe464.1.2.a -o $@
 
-librcp.o: $(LIB_RCP_DEPEND)
-	$(CC) $(CFLAGS) -c $(LIB_RCP_SRCS) -o $@
+# rcopy: $(RCOPY_DEPEND)
+# 	$(CC) $(CFLAGS) $(RCOPY_SRCS) -o $@
 
-safe.o: $(SAFE_DEPEND)
-	$(CC) $(CFLAGS) -c $(SAFE_SRCS) -o $@
+# server: $(SERVER_DEPEND)
+# 	$(CC) $(CFLAGS) $(SERVER_SRCS) -o $@
 
-cpe464lib: 
-	@make -f ./cpe464_lib/lib.mk
-	@rm -f example.mk
+# librcp.o: $(LIB_RCP_DEPEND)
+# 	$(CC) $(CFLAGS) $(LIB_RCP_SRCS) -o $@
+
+# util.o: $(UTIL_DEPEND)
+# 	$(CC) $(CFLAGS) $(UTIL_SRCS) -o $@
+
+# cpe464lib: 
+# 	@make -f ./cpe464_lib/lib.mk
+# 	@rm -f example.mk
 
 clean:
-	@rm -f *~ *.o
+	@rm -f *~ *.o *.d
 
 allclean:
-	@rm -f *~ rcopy server *~ *.o example.mk cpe464.h libcpe464.1.2.a
+	@rm -f *~ rcopy server *~ *.o example.mk *.d
 
 test:
 	@echo "Needs a test functionality"
+
+
+-include *.d
