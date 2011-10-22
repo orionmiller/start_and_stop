@@ -1,16 +1,209 @@
-#include "librcp.h"
+#include "server.h"
 
 int main(int argc, char *argv[])
 {
-
   server *Server;
-  uint8_t buffer[80];
-  Server = server_sock();
-  recv_msg(Server->sock, buffer, 3, (struct sockaddr *)&(Server->remote));
-  buffer[79] = '\0';
+  rcp_pkt *Recv_Pkt;
+  rcp_pkt *Send_Pkt;
+  pthread_t threads[MAX_THREADS];
+  //  int thread_args[MAX_THREADS];
+  //  int active_threads = 0;
+  double error_rate;
+  server_info *Info = s_malloc(sizeof(server_info));
+  char test_msg[] = "LO";
+
+  handle_args(&error_rate, argc, argv);
   
-  printf("mesg: \"$%s\"\n", buffer);
-  
+
+  Recv_Pkt = pkt_alloc(INIT_DATA_SIZE);
+  Send_Pkt = pkt_alloc(INIT_DATA_SIZE);
+  Server = server_sock(INIT_DATA_SIZE);
+
+  sendtoErr_setup(error_rate);
+  printf("Port: %d\n", ntohs(Server->local.sin_port));
+
+  recv_pkt(Recv_Pkt, Server->sock, Server->remote, Server->buffsize);
+  printf("Received Pakt - %s\n", Recv_Pkt->data);
+  create_pkt(Send_Pkt, (OP_BEG|OP_ACK), 1, (uint8_t *)test_msg, strlen(test_msg)+1); //magic number
+  send_pkt(Send_Pkt, Server->sock, Server->remote);
+
+  while(FALSE)
+    {
+      if(check_pkt_state(Recv_Pkt, (OP_BEG|OP_SYN), 0)) //Server->seq
+	{
+	  /* printf("accepted 1st packet\n"); */
+	  /* printf("befor thread - sock: %u\n", Server->sock); */
+	  /* printf("before thread - remote: %p\n", &(Server->remote)); */
+	  if(FALSE)
+	    {
+	      s_memcpy(&(Info->buffsize), Recv_Pkt->data + BUFF_SIZE_OFF, sizeof(uint32_t));
+	      Info->buffsize = ntohl(Info->buffsize);
+	      s_memcpy(&(Info->filename), Recv_Pkt->data + FILENAME_OFF, Recv_Pkt->data_len - sizeof(uint32_t));
+	      Info->OG_Server = Server;
+	      printf("before newthred\n");
+	      pthread_create(&threads[0], NULL, thread_server, (void *)Info);
+	      pthread_join(threads[0], NULL);
+	      //new_thread - pass server & rec_pkt
+	    }
+	}
+    }
+
+  close(Server->sock);
+  free(Server);
+  free(Recv_Pkt);
 
   return EXIT_SUCCESS;
 }
+
+void handle_args(double *error_rate, int argc, char *argv[])
+{
+  if (argc == NUM_ARGS)
+    {
+      *error_rate = atof(argv[ERROR_PERCENT_ARGC]);
+    }
+  else
+    {
+      printf("usage: server <error_rate>\n");
+      exit(EXIT_FAILURE);
+    }
+}
+
+
+void *thread_server(void *Info)
+{
+  FILE *file;
+  server_info *Server_Info = (server_info *)Info;
+  rcp_pkt *Send_Pkt;
+  rcp_pkt *Recv_Pkt;
+  server *Server;
+  printf("Thread\n");
+  printf("buffsize: %u\n", Server_Info->buffsize);
+  printf("filename: %s\n", Server_Info->filename);
+  Server = server_sock(Server_Info->buffsize);
+  Send_Pkt = pkt_alloc(Server_Info->buffsize);
+  Recv_Pkt = pkt_alloc(Server_Info->buffsize);
+  
+  Server->filename = Server_Info->filename;
+  Server->seq += 1;
+  printf("old sock: %u\n", Server_Info->OG_Server->sock);
+  printf("old remote: %p\n", &(Server_Info->OG_Server->remote));
+  establish_connection(Server_Info->OG_Server, Server, Send_Pkt);
+  printf("established connection\n");
+  file = fopen(Server_Info->filename,"w+");
+  printf("created file\n");
+  if (!ferror(file))
+    {
+      printf("transfer file\n");
+      if(transfer_file_setup(Server, Send_Pkt, Recv_Pkt) != NULL)
+	transfer_file(Server, Send_Pkt, Recv_Pkt, file);
+      fclose(file);
+    }
+  else
+    {
+      printf("file error\n");
+      file_error(Server, Send_Pkt, Recv_Pkt, errno);
+    }
+  end_conn(Server, Send_Pkt, Recv_Pkt);
+  close(Server->sock);
+  free(Server);
+  free(Send_Pkt);
+  free(Recv_Pkt);
+
+  pthread_exit(NULL);
+}
+
+
+void establish_connection(server *Old_Server, server* New_Server, rcp_pkt *Send_Pkt)
+{
+  Send_Pkt->data_len = sizeof(New_Server->local.sin_port);
+  uint8_t *data = (uint8_t *)&(New_Server->local.sin_port);
+  printf("establish creating packet\n");
+  create_pkt(Send_Pkt, (OP_BEG|OP_ACK), 1, data, Send_Pkt->data_len); //magic number
+  send_pkt(Send_Pkt, Old_Server->sock, Old_Server->remote);
+  //possible erros with create packet
+}
+
+
+void file_error(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, int errno_l)
+{
+  exp_ops ops;
+  create_pkt(Send_Pkt, (OP_FIL|OP_ERR|OP_SYN), Server->seq, (uint8_t *)&errno_l, sizeof(errno_l));
+  ops.num_ops = 1;
+  ops.opcode[0] = (OP_FIL|OP_ERR|OP_SYN);
+  try_send(Server, Send_Pkt, Recv_Pkt, ops);
+}
+
+
+rcp_pkt *transfer_file_setup(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
+{
+  exp_ops ops;
+  create_pkt(Send_Pkt, (OP_FIL|OP_BEG|OP_SYN), Server->seq, NULL, 0); //magic number
+  ops.num_ops = 1;
+  ops.opcode[0] = (OP_FIL|OP_BEG|OP_ACK);
+  return try_send(Server, Send_Pkt, Recv_Pkt, ops);
+}
+
+
+void transfer_file(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, FILE *fp)
+{
+  exp_ops ops;
+  uint8_t *data;
+  uint32_t data_len = 0;
+  
+  ops.num_ops = 1;
+  ops.opcode[0] = (OP_FIL|OP_ACK);
+  data = s_malloc(Server->buffsize);
+
+  while (!feof(fp))
+    {
+      data_len = fread(data, 1, Server->buffsize, fp);
+      if (!ferror(fp))
+	{
+	  create_pkt(Send_Pkt, (OP_FIL|OP_SYN), Server->seq, data, data_len);
+	  try_send(Server, Send_Pkt, Recv_Pkt, ops);
+	}
+      else
+	break;
+    }
+  free(data);
+}
+
+
+void end_conn(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
+{
+  exp_ops ops;
+  create_pkt(Send_Pkt, OP_FIN|OP_SYN, Server->seq, NULL, 0); //magic number
+  ops.num_ops = 1;
+  ops.opcode[0] = OP_FIN|OP_ACK;
+  try_send(Server, Send_Pkt, Recv_Pkt, ops);
+}
+
+
+rcp_pkt *try_send(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops ops)
+{
+  int n, j;
+
+  for (n = 0; n < MAX_TRIES; n++)
+    {
+      send_pkt(Send_Pkt, Server->sock, Server->remote); //may be wrong
+      if (select_call(Server->sock, MAX_TRY_WAIT_TIME_S, MAX_TRY_WAIT_TIME_US))
+	{
+	  recv_pkt(Recv_Pkt, Server->sock, Server->remote, Server->buffsize); //may be wrong
+	  for (j = 0; j < ops.num_ops && j < MAX_EXP_OPS; j++)
+	    {
+	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Server->seq+SEQ_RECV_DIFF))
+		{
+		  Server->seq += 2; //CHANGING SEQUENCE
+		  return Recv_Pkt;
+		}
+	    }
+	}
+    }
+  Server->seq += 1;
+  return NULL;
+}
+
+
+
+
+

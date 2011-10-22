@@ -10,11 +10,15 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <sys/time.h>
 
-#include "safe.h"
-#include "checksum.h"
+#include "util.h"
+#include "cpe464.h"
 
-extern int h_errno;
+#ifndef LIBRCP_H_
+#define LIBRCP_H_
+
+//extern int h_errno;
 
 //Is the buffer size absolute for the entire packet or is it the
 //size of the data/payload coming.
@@ -23,11 +27,9 @@ extern int h_errno;
 //
 //
 // 0----------------------------15----------------------------31
-// |           Opcode            |          Checksum           |
-// |-----------------------------------------------------------|
-// |                       Header Info                         |
-// |-----------------------------------------------------------|
 // |                        Sequence                           |
+// |-----------------------------------------------------------|
+// |          Checksum           |           Opcode            |
 // |-----------------------------------------------------------|
 // .                           Data::                          .
 // .                                                           .
@@ -39,27 +41,20 @@ extern int h_errno;
 // Checksum
 //   The checksum of the Header and the Data.
 //
-// Header Info
-//   Buff Size
-//     When a SYN packet is sent a buffer size should be put inside the info 
-//     field so the server knows what size of the data buffer is.
-//
-//   File Offset
-//     Contains the file offset based off of the buff size.
-//     (e.g. Buff Size = 500 bytes & offset = 3
-//
 
 typedef struct {
-  uint16_t opcode;
+  uint32_t seq;
   uint16_t checksum;
-  uint32_t info;
-}rcp_hdr;
+  uint16_t opcode;
+} rcp_hdr;
+
 
 // RCP HDR 
 #define RCP_HDR_LEN (sizeof(rcp_hdr))
-#define RCP_OPCODE_OFFSET (sizeof(uint16_t))
-#define RCP_CHECKSUM_OFFSET (sizeof(uint16_t))
-#define RCP_INFO_OFFSET (sizeof(uint32_t))
+#define RCP_HDR_SEQ_OFFSET (0)
+#define RCP_HDR_CHECKSUM_OFFSET (4)
+#define RCP_HDR_OPCODE_OFFSET (6)
+
 
 // Op-Codes
 //
@@ -115,62 +110,146 @@ typedef struct {
 //--Socket Set Up--//
 #define SOCK_DOMAIN AF_INET
 #define SOCK_TYPE SOCK_DGRAM
-#define DEFAULT_PROTOCOL 0
-#define DEFAULT_PORT 0
+#define DEFAULT_PROTOCOL (0)
+#define DEFAULT_PORT (0)
 
-typedef struct{
+#define TRUE (1)
+#define FALSE (0)
+
+#define MAX_EXP_OPS (5) //max expected opcodes
+#define SEQ_RECV_DIFF (1) //difference between current seq number and expected incoming seq
+
+
+typedef struct {
+  rcp_hdr *Hdr;
+  uint8_t *datagram;
+  uint32_t datagram_len;
+  uint8_t *data;
+  uint32_t data_len;
+} rcp_pkt;
+
+
+typedef struct {
+  uint16_t opcode[MAX_EXP_OPS];
+  uint32_t num_ops;
+} exp_ops;
+
+typedef struct {
   int sock;
   struct sockaddr_in remote;
-}client;
+  uint32_t seq;
+  uint32_t buffsize;
+  uint8_t *remote_filename;
+  uint8_t *local_filename;
+} client;
 
-typedef struct{
+typedef struct {
   int sock;
   struct sockaddr_in remote;
   struct sockaddr_in local;
-  //  uint32_t l_len;
-  //  uint32_T r_len;
-  
-}server;
+  uint32_t seq;
+  uint32_t buffsize;
+  char *filename;
+} server;
 
+//--sendErr--//
+#define ERROR_RATE_ZERO (0)
+
+//--OPCODE Specific Data Offsets--//
+#define FILENAME_OFF (4)
+#define BUFF_SIZE_OFF (0)
+#define REMOTE_PORT_OFF (0)
+#define ERRNO_DATA_OFFSET (0)
+
+
+//-----------------------Prototypes---------------------------//
+
+
+//--Set Up--//
 
 // Client Sock
 //   Generates and sets up a client side UDP socket.
-client *client_sock(char *remote_addr, char *remote_port);
+client *client_sock(char *remote_address, uint16_t remote_port, uint32_t buffsize);
 
 // Server Sock
 //   Generates and sets up a server side UDP socket.
-server *server_sock(void);//char *remote_addr, char *remote_port);
+server *server_sock(uint32_t buffsize);
 
-//--RCP Packets--//
 
-// Send SYN
-//   Sends a SYN packet through the given socket.
-int send_big(int socket);
+// Sets up the Send to Err
+//  Pass in the error rate you want and it will call sendtoErr_init
+//  with its according correct parameters.
+void sendtoErr_setup(double error_rate);
 
-// Send ACK
-//   Sends an ACK packet through the given socket.
-int send_ack(int socket);
+//--Packets--//
 
-// Send FIN
-//   Sends a FIN packet through the given socket.
-int send_fin(int socket);
+// Create Packet
+//   Pass in 
+void create_pkt(rcp_pkt *Pkt, uint16_t opcode, uint32_t seq, uint8_t *data, uint32_t data_len);
 
-// Send ERR
-//   Sends an ERR packet through the given socket.
-int send_err(int socket, rcp_hdr *Rcp_Hdr);
 
-// Send FIL
-//   Sends a 
-int send_fil(int socket); //add a file descriptor or file pointer
+// Send Packet
+//  Sends any packet you wish.
+void send_pkt(rcp_pkt *Pkt, int socket, struct sockaddr_in dst_addr);
 
-void send_msg(int socket, char *msg, size_t length, struct sockaddr *dst_addr);
-
-void recv_msg(int socket, void *buffer, size_t length, struct sockaddr *src_addr);
-//--RCP HDR--//
-
+// Receive Packet
 // 
-rcp_hdr *get_rcp_hdr(uint8_t *datagram);
+// Pkt needs to be properly malloced before this fu
+void recv_pkt(rcp_pkt *Pkt, int socket, struct sockaddr_in src_addr, uint32_t buffsize);
 
+//--HDR--//
+void create_hdr(rcp_pkt *Pkt, uint32_t seq, uint16_t opcode);
+
+
+// Get RCP Header
 // 
-int check_rcp_hdr(uint8_t *datagram);
+void get_hdr(rcp_pkt *Pkt);
 
+void get_pkt(rcp_pkt *Pkt);
+
+// Check RCP header
+
+uint16_t pkt_checksum(rcp_pkt *Pkt);
+
+//--Sate Check--//
+//   Check to see if the pkt state is what your expecting.
+//  Pkt is the packet which have been filled with data by calling recv_pkt(...)
+//  opcode - is the opcoe which your expecting
+//  seq - is the sequence number your expecting
+
+int check_pkt_state(rcp_pkt *Pkt, uint16_t opcode, uint32_t seq);
+
+int select_call(int socket, int seconds, int useconds);
+
+rcp_pkt *pkt_alloc(uint32_t buffsize);
+
+
+
+//Opcode Data
+//  What data an opcode is expecting in it's data field.
+//
+// SYN|BEG
+//  Expects sending a buffer size.
+//
+//             DATA
+//  0------------------------15
+//  |       Buffer Size       |   
+//  +-------------------------+
+//
+//
+// SYN|FIL
+//   Expects the file name which it is requesting to download.
+//   The character array must end in '\0'
+//  
+//   uint8_t filename[256]
+//
+// ACK|FIL|ERR
+//   Right after the SYN|FIL packet was sent. Server stating there
+//   is an error with the file. Atomic stating types of errors.
+//
+//   uint32_t error;
+//     
+//   FIL_NAME_DNE - filename doesn't exist
+//  
+
+#endif
