@@ -68,6 +68,7 @@ int main(int argc, char *argv[]) {
 	  printf("file error\n");
 	  file_error(Recv_Pkt);
 	  ops.num_ops = 1;
+	  Client->seq -=2;
 	  ops.opcode[0] = (OP_FIN|OP_SYN);
 	  try_recv(Client, Recv_Pkt, ops);
 	  end_conn(Client, Send_Pkt, Recv_Pkt);
@@ -93,6 +94,7 @@ rcp_pkt *init_connection(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
   uint8_t *data = s_malloc(data_len);
   s_memcpy(data + BUFF_SIZE_OFF, &n_buffsize, sizeof(uint32_t));
   s_memcpy(data + FILENAME_OFF, Client->remote_filename, strlen((const char *)Client->remote_filename)+1);
+  Client->seq = 0;
   create_pkt(Send_Pkt, (OP_BEG|OP_SYN), Client->seq, data, data_len);
   free(data);
   ops.num_ops = 1;
@@ -128,7 +130,7 @@ FILE *transfer_file_setup(client *Client, rcp_pkt *Send_Pkt, char *filename)
 {
   FILE* file;
   file = fopen(filename, "wb+");
-  if (!ferror(file))
+  if (file == NULL || !ferror(file))
     {
       create_pkt(Send_Pkt, (OP_FIL|OP_BEG|OP_ACK), Client->seq, NULL, 0); //SEQ NUM
       send_pkt(Send_Pkt, Client->sock, Client->remote);
@@ -161,7 +163,8 @@ void end_conn(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
 {
   exp_ops ops;
   ops.num_ops = 1;
-  ops.opcode[1] = (OP_FIN|OP_SYN);
+  ops.opcode[0] = (OP_FIN|OP_SYN);
+  Client->seq -= 2;
   if(try_recv(Client, Recv_Pkt, ops) != NULL)
     {
       create_pkt(Send_Pkt, (OP_FIN|OP_ACK), Client->seq, NULL, 0); //magic number
@@ -185,7 +188,7 @@ rcp_pkt *try_recv(client *Client, rcp_pkt *Recv_Pkt, exp_ops ops)
 	    {
 	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Client->seq+SEQ_RECV_DIFF))
 		{
-		  Client->seq += 2; //CHANGING SEQUENCE
+		  Client->seq += 2; //CHANGING SEQUENCE -- used to be 2
 		  return Recv_Pkt;
 		}
 	    }
@@ -194,7 +197,6 @@ rcp_pkt *try_recv(client *Client, rcp_pkt *Recv_Pkt, exp_ops ops)
 	break_flag = FALSE;
     }
   return NULL;
-
 }
 
 rcp_pkt *try_send(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops ops)
@@ -217,7 +219,6 @@ rcp_pkt *try_send(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops 
 	    }
 	}
     }
-  printf("No packets received\n");
-  Client->seq += 1; //CHANGING SEQUENCE
+  printf("Connection - Time Out\n");
   return NULL;
 }

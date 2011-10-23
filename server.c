@@ -78,7 +78,7 @@ void *thread_server(void *Info)
   if(!establish_connection(Server_Info->OG_Server, Server, Send_Pkt, Recv_Pkt))
     {
       file = fopen(Server_Info->filename,"rb+");
-      if (!ferror(file))
+      if (file != NULL && !ferror(file))
 	{
 	  printf("opened file\n");
 	  printf("transfer file\n");
@@ -120,6 +120,7 @@ rcp_pkt *establish_connection(server *Old_Server, server* New_Server, rcp_pkt *S
 void file_error(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, int errno_l)
 {
   exp_ops ops;
+  Server->seq = 3;
   create_pkt(Send_Pkt, (OP_FIL|OP_ERR|OP_SYN), Server->seq, (uint8_t *)&errno_l, sizeof(errno_l));
   ops.num_ops = 1;
   ops.opcode[0] = (OP_FIL|OP_ERR|OP_SYN);
@@ -187,13 +188,13 @@ rcp_pkt *try_send(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops 
 	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Server->seq+SEQ_RECV_DIFF))
 		{
 		  Server->seq += 2; //CHANGING SEQUENCE
-		  printf("try send - new seq: %u\n", Server->seq);
+		  printf("Good ACK - Seq Now: %u\n", Server->seq);
 		  return Recv_Pkt;
 		}
 	    }
 	}
     }
-  Server->seq += 1;
+  printf("Connection - Time Out\n");
   return NULL;
 }
 
