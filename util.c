@@ -59,7 +59,7 @@ void *s_malloc(size_t size)
 
 void s_bind(int socket, const struct sockaddr *address, socklen_t address_len)
 {
-  if(bind(socket, address, address_len) < 0)
+  if(bindMod(socket, address, address_len) < 0)
     {
       perror("s_bind");
       exit(EXIT_FAILURE);
@@ -87,3 +87,4 @@ struct hostent* s_gethostbyname(const char *name)
     }
   return hp;
 }
+

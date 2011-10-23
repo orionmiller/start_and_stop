@@ -13,11 +13,10 @@ int main(int argc, char *argv[]) {
   uint8_t *data;
   FILE *file;
   exp_ops ops;
-  char test_msg[] = "LO";
 
   if (argc != NUM_ARGS)
     {
-      printf("usage: rcop remote-file local-file buffer-size error-percent remote-machine remote-port\n");
+      printf("usage: rcopy remote-file local-file buffer-size error-percent remote-machine remote-port\n");
       exit(EXIT_FAILURE);
     }
   remote_filename = argv[REMOTE_FILE_ARGC];
@@ -33,23 +32,17 @@ int main(int argc, char *argv[]) {
 
   Client = client_sock(remote_addr, (uint16_t)remote_port, buffsize);
   Client->remote_filename = (uint8_t *)remote_filename;
-  printf("before init conn seq: %d\n", Client->seq);
   sendtoErr_setup(error_rate);
-  //needs filename in init connectoin
-  create_pkt(Send_Pkt, (OP_BEG|OP_SYN), 0, (uint8_t *)test_msg, strlen(test_msg)+1);
-  send_pkt(Send_Pkt, Client->sock, Client->remote);
-  printf("Sent Pkt\n");
-  printf("Waiting to get pkt\n");
-  recv_pkt(Recv_Pkt, Client->sock, Client->remote, 80);
-  printf("Pkt received - %s\n", Recv_Pkt->data);
 
   if (init_connection(Client, Send_Pkt, Recv_Pkt))
     {
-      establish_connection(Client, Recv_Pkt, remote_addr);
+      printf("initialized & establishing\n");
+      establish_connection(Client, Recv_Pkt, Send_Pkt, remote_addr);
+      printf("established\n");
       ops.num_ops = 2;
       ops.opcode[0] = (OP_FIL|OP_BEG|OP_SYN);
       ops.opcode[1] = (OP_FIL|OP_ERR|OP_SYN);
-      printf("tryin to receive\n");
+      printf("waiting for File transfer setup\n");
       try_recv(Client, Recv_Pkt, ops);
       if (Recv_Pkt->Hdr->opcode == (OP_FIL|OP_BEG|OP_SYN))
 	{
@@ -95,27 +88,20 @@ int main(int argc, char *argv[]) {
 rcp_pkt *init_connection(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
 {
   exp_ops ops;
-  int j;
   uint32_t n_buffsize = htonl(Client->buffsize);
   uint32_t data_len = sizeof(uint32_t) + strlen((const char *)Client->remote_filename) + 1;
   uint8_t *data = s_malloc(data_len);
-  printf("remote_filename : %s\n", Client->remote_filename);
-  ops.num_ops = 1;
-  ops.opcode[0] = (OP_BEG|OP_ACK);
   s_memcpy(data + BUFF_SIZE_OFF, &n_buffsize, sizeof(uint32_t));
   s_memcpy(data + FILENAME_OFF, Client->remote_filename, strlen((const char *)Client->remote_filename)+1);
-  for (j =0; j < strlen((const char *)Client->remote_filename) + 1; j++)
-    {
-      printf("%c", data[FILENAME_OFF + j]);
-    }
-  printf("\n");
   create_pkt(Send_Pkt, (OP_BEG|OP_SYN), Client->seq, data, data_len);
-  send_pkt(Send_Pkt, Client->sock, Client->remote);
+  free(data);
+  ops.num_ops = 1;
+  ops.opcode[0] = (OP_BEG|OP_SYN|OP_ACK);
   return try_send(Client, Send_Pkt, Recv_Pkt, ops);
 }
 
 
-void establish_connection(client *Client, rcp_pkt *Recv_Pkt, char *remote_addr)
+void establish_connection(client *Client, rcp_pkt *Recv_Pkt, rcp_pkt *Send_Pkt, char *remote_addr)
 {
   uint32_t buffsize = Client->buffsize;
   uint16_t remote_port;
@@ -125,7 +111,9 @@ void establish_connection(client *Client, rcp_pkt *Recv_Pkt, char *remote_addr)
   close(Client->sock);
   free(Client);
   Client = client_sock(remote_addr, remote_port, buffsize);
-  printf("established new client\n");
+  Client->seq = 2;
+  create_pkt(Send_Pkt, (OP_BEG|OP_ACK), Client->seq, NULL, 0);
+  send_pkt(Send_Pkt, Client->sock, Client->remote);
 }
 
 void file_error(rcp_pkt *Recv_Pkt)
@@ -139,7 +127,7 @@ void file_error(rcp_pkt *Recv_Pkt)
 FILE *transfer_file_setup(client *Client, rcp_pkt *Send_Pkt, char *filename)
 {
   FILE* file;
-  file = fopen(filename, "w+");
+  file = fopen(filename, "wb+");
   if (!ferror(file))
     {
       create_pkt(Send_Pkt, (OP_FIL|OP_BEG|OP_ACK), Client->seq, NULL, 0); //SEQ NUM
@@ -156,9 +144,10 @@ FILE *transfer_file_setup(client *Client, rcp_pkt *Send_Pkt, char *filename)
 
 void transfer_file(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, FILE *file)
 {
-
+  printf("1st byte - to be written : %c\n", (Recv_Pkt->data)[0]);
   fwrite(Recv_Pkt->data, sizeof(uint8_t),Recv_Pkt->data_len,file);
-  if(feof(file))
+  fflush(file);
+  if(ferror(file))
     {
       perror("File Write");
       exit(EXIT_FAILURE);
@@ -182,13 +171,16 @@ void end_conn(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
 
 rcp_pkt *try_recv(client *Client, rcp_pkt *Recv_Pkt, exp_ops ops)
 {
-  int flag = TRUE;
+  int break_flag = TRUE;
   int j = 0;
-  while (flag)
+  while (break_flag)
     {
+      printf("try - recv - befor select call\n");
       if(select_call(Client->sock, MAX_RECV_WAIT_TIME_S, MAX_RECV_WAIT_TIME_US))
 	{
-	  recv_pkt(Recv_Pkt, Client->sock, Client->remote, Client->buffsize); //may be wrong
+	  recv_pkt(Recv_Pkt, Client->sock, &(Client->remote), Client->buffsize); //may be wrong
+	  printf("received pkt -- seq: %u\n", Recv_Pkt->Hdr->seq);
+	  print_opcode(Recv_Pkt->Hdr->opcode);
 	  for (j = 0; j < ops.num_ops && MAX_EXP_OPS; j++)
 	    {
 	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Client->seq+SEQ_RECV_DIFF))
@@ -198,7 +190,8 @@ rcp_pkt *try_recv(client *Client, rcp_pkt *Recv_Pkt, exp_ops ops)
 		}
 	    }
 	}
-      flag = FALSE;
+      else
+	break_flag = FALSE;
     }
   return NULL;
 
@@ -213,7 +206,7 @@ rcp_pkt *try_send(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops 
       send_pkt(Send_Pkt, Client->sock, Client->remote); //may be wrong
       if (select_call(Client->sock, MAX_SEND_WAIT_TIME_S, MAX_SEND_WAIT_TIME_US))
 	{
-	  recv_pkt(Recv_Pkt, Client->sock, Client->remote, Client->buffsize); //may be wrong
+	  recv_pkt(Recv_Pkt, Client->sock, &(Client->remote), Client->buffsize); //may be wrong
 	  for (j = 0; j < ops.num_ops && j < MAX_EXP_OPS; j++)
 	    {
 	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Client->seq+SEQ_RECV_DIFF))

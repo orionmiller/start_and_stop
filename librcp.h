@@ -195,7 +195,7 @@ void send_pkt(rcp_pkt *Pkt, int socket, struct sockaddr_in dst_addr);
 // Receive Packet
 // 
 // Pkt needs to be properly malloced before this fu
-void recv_pkt(rcp_pkt *Pkt, int socket, struct sockaddr_in src_addr, uint32_t buffsize);
+void recv_pkt(rcp_pkt *Pkt, int socket, struct sockaddr_in *src_addr, uint32_t buffsize);
 
 //--HDR--//
 void create_hdr(rcp_pkt *Pkt, uint32_t seq, uint16_t opcode);
@@ -223,7 +223,7 @@ int select_call(int socket, int seconds, int useconds);
 
 rcp_pkt *pkt_alloc(uint32_t buffsize);
 
-
+void print_opcode(uint16_t opcode);
 
 //Opcode Data
 //  What data an opcode is expecting in it's data field.

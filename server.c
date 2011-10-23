@@ -4,47 +4,36 @@ int main(int argc, char *argv[])
 {
   server *Server;
   rcp_pkt *Recv_Pkt;
-  rcp_pkt *Send_Pkt;
   pthread_t threads[MAX_THREADS];
   //  int thread_args[MAX_THREADS];
   //  int active_threads = 0;
   double error_rate;
   server_info *Info = s_malloc(sizeof(server_info));
-  char test_msg[] = "LO";
 
   handle_args(&error_rate, argc, argv);
-  
 
   Recv_Pkt = pkt_alloc(INIT_DATA_SIZE);
-  Send_Pkt = pkt_alloc(INIT_DATA_SIZE);
   Server = server_sock(INIT_DATA_SIZE);
 
-  sendtoErr_setup(error_rate);
+
   printf("Port: %d\n", ntohs(Server->local.sin_port));
 
-  recv_pkt(Recv_Pkt, Server->sock, Server->remote, Server->buffsize);
-  printf("Received Pakt - %s\n", Recv_Pkt->data);
-  create_pkt(Send_Pkt, (OP_BEG|OP_ACK), 1, (uint8_t *)test_msg, strlen(test_msg)+1); //magic number
-  send_pkt(Send_Pkt, Server->sock, Server->remote);
-
-  while(FALSE)
+  while(TRUE)
     {
+      recv_pkt(Recv_Pkt, Server->sock, &(Server->remote), Server->buffsize);
       if(check_pkt_state(Recv_Pkt, (OP_BEG|OP_SYN), 0)) //Server->seq
 	{
 	  /* printf("accepted 1st packet\n"); */
 	  /* printf("befor thread - sock: %u\n", Server->sock); */
 	  /* printf("before thread - remote: %p\n", &(Server->remote)); */
-	  if(FALSE)
-	    {
-	      s_memcpy(&(Info->buffsize), Recv_Pkt->data + BUFF_SIZE_OFF, sizeof(uint32_t));
-	      Info->buffsize = ntohl(Info->buffsize);
-	      s_memcpy(&(Info->filename), Recv_Pkt->data + FILENAME_OFF, Recv_Pkt->data_len - sizeof(uint32_t));
-	      Info->OG_Server = Server;
-	      printf("before newthred\n");
-	      pthread_create(&threads[0], NULL, thread_server, (void *)Info);
-	      pthread_join(threads[0], NULL);
-	      //new_thread - pass server & rec_pkt
-	    }
+	  Info->error_rate = error_rate;
+	  s_memcpy(&(Info->buffsize), Recv_Pkt->data + BUFF_SIZE_OFF, sizeof(uint32_t));
+	  Info->buffsize = ntohl(Info->buffsize);
+	  s_memcpy(&(Info->filename), Recv_Pkt->data + FILENAME_OFF, Recv_Pkt->data_len - sizeof(uint32_t));
+	  Info->OG_Server = Server;
+	  printf("before newthred\n");
+	  pthread_create(&threads[0], NULL, thread_server, (void *)Info);
+	  pthread_join(threads[0], NULL); //---remove for multithreading
 	}
     }
 
@@ -79,31 +68,32 @@ void *thread_server(void *Info)
   printf("Thread\n");
   printf("buffsize: %u\n", Server_Info->buffsize);
   printf("filename: %s\n", Server_Info->filename);
+  sendtoErr_setup(Server_Info->error_rate);
   Server = server_sock(Server_Info->buffsize);
   Send_Pkt = pkt_alloc(Server_Info->buffsize);
   Recv_Pkt = pkt_alloc(Server_Info->buffsize);
   
   Server->filename = Server_Info->filename;
-  Server->seq += 1;
-  printf("old sock: %u\n", Server_Info->OG_Server->sock);
-  printf("old remote: %p\n", &(Server_Info->OG_Server->remote));
-  establish_connection(Server_Info->OG_Server, Server, Send_Pkt);
-  printf("established connection\n");
-  file = fopen(Server_Info->filename,"w+");
-  printf("created file\n");
-  if (!ferror(file))
+  //  Server->seq = 1;
+  if(!establish_connection(Server_Info->OG_Server, Server, Send_Pkt, Recv_Pkt))
     {
-      printf("transfer file\n");
-      if(transfer_file_setup(Server, Send_Pkt, Recv_Pkt) != NULL)
-	transfer_file(Server, Send_Pkt, Recv_Pkt, file);
-      fclose(file);
+      file = fopen(Server_Info->filename,"rb+");
+      if (!ferror(file))
+	{
+	  printf("opened file\n");
+	  printf("transfer file\n");
+	  Server->seq = 3;
+	  if(transfer_file_setup(Server, Send_Pkt, Recv_Pkt) != NULL)
+	    transfer_file(Server, Send_Pkt, Recv_Pkt, file);
+	  fclose(file);
+	}
+      else
+	{
+	  printf("file error\n");
+	  file_error(Server, Send_Pkt, Recv_Pkt, errno);
+	}
+      end_conn(Server, Send_Pkt, Recv_Pkt);
     }
-  else
-    {
-      printf("file error\n");
-      file_error(Server, Send_Pkt, Recv_Pkt, errno);
-    }
-  end_conn(Server, Send_Pkt, Recv_Pkt);
   close(Server->sock);
   free(Server);
   free(Send_Pkt);
@@ -113,14 +103,17 @@ void *thread_server(void *Info)
 }
 
 
-void establish_connection(server *Old_Server, server* New_Server, rcp_pkt *Send_Pkt)
+rcp_pkt *establish_connection(server *Old_Server, server* New_Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt)
 {
+  exp_ops ops;
   Send_Pkt->data_len = sizeof(New_Server->local.sin_port);
   uint8_t *data = (uint8_t *)&(New_Server->local.sin_port);
   printf("establish creating packet\n");
-  create_pkt(Send_Pkt, (OP_BEG|OP_ACK), 1, data, Send_Pkt->data_len); //magic number
-  send_pkt(Send_Pkt, Old_Server->sock, Old_Server->remote);
-  //possible erros with create packet
+  New_Server->seq = 1;
+  create_pkt(Send_Pkt, (OP_BEG|OP_SYN|OP_ACK), New_Server->seq, data, Send_Pkt->data_len);
+  ops.num_ops = 1;
+  ops.opcode[0] = (OP_BEG|OP_ACK);
+  return try_send(Old_Server, Send_Pkt, Recv_Pkt, ops);
 }
 
 
@@ -188,12 +181,13 @@ rcp_pkt *try_send(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops 
       send_pkt(Send_Pkt, Server->sock, Server->remote); //may be wrong
       if (select_call(Server->sock, MAX_TRY_WAIT_TIME_S, MAX_TRY_WAIT_TIME_US))
 	{
-	  recv_pkt(Recv_Pkt, Server->sock, Server->remote, Server->buffsize); //may be wrong
+	  recv_pkt(Recv_Pkt, Server->sock, &(Server->remote), Server->buffsize); //may be wrong
 	  for (j = 0; j < ops.num_ops && j < MAX_EXP_OPS; j++)
 	    {
 	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Server->seq+SEQ_RECV_DIFF))
 		{
 		  Server->seq += 2; //CHANGING SEQUENCE
+		  printf("try send - new seq: %u\n", Server->seq);
 		  return Recv_Pkt;
 		}
 	    }
@@ -204,6 +198,32 @@ rcp_pkt *try_send(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops 
 }
 
 
+/* rcp_pkt *try_recv(server *Server, rcp_pkt *Recv_Pkt, exp_ops ops) */
+/* { */
+/*   int break_flag = TRUE; */
+/*   int j = 0; */
+/*   while (break_flag) */
+/*     { */
+/*       if(select_call(Server->sock, MAX_RECV_WAIT_TIME_S, MAX_RECV_WAIT_TIME_US)) */
+/* 	{ */
+/* 	  recv_pkt(Recv_Pkt, Server->sock, &(Server->remote), Server->buffsize); */
+/* 	  printf("!!!!!!!!received pkt -- seq: %u\n", Recv_Pkt->Hdr->seq); */
+/* 	  //	  print_opcode(Recv_Pkt->Hdr->opcode); */
+/* 	  //	  print_ */
+/* 	  for (j = 0; j < ops.num_ops && MAX_EXP_OPS; j++) */
+/* 	    { */
+/* 	      if (check_pkt_state(Recv_Pkt, ops.opcode[j], Server->seq+SEQ_RECV_DIFF)) */
+/* 		{ */
+/* 		  Server->seq += 2; //CHANGING SEQUENCE */
+/* 		  return Recv_Pkt; */
+/* 		} */
+/* 	    } */
+/* 	} */
+/*       else */
+/* 	break_flag = FALSE; */
+/*     } */
+/*   return NULL; */
 
+/* } */
 
 

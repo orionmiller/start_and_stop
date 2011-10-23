@@ -29,7 +29,7 @@
 
 rcp_pkt *init_connection(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt);
 
-void establish_connection(client *Client, rcp_pkt *Recv_Pkt, char *remote_addr);
+void establish_connection(client *Client, rcp_pkt *Recv_Pkt, rcp_pkt *Send_Pkt, char *remote_addr);
 void file_error(rcp_pkt *Recv_Pkt);
 FILE *transfer_file_setup(client *Client, rcp_pkt *Send_Pkt, char *filename);
 void transfer_file(client *Client, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, FILE *file);

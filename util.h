@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <string.h>
 
+#include "cpe464.h"
 
 #ifndef UTIL_H_
 #define UTIL_H_
@@ -29,6 +30,8 @@ void s_bind(int socket, const struct sockaddr *address, socklen_t address_len);
 void s_getsockname(int socket, struct sockaddr *address, socklen_t *address_len);
 
 struct hostent *s_gethostbyname(const char *name);
+
+void s_listen(int socket, int backlog);
 
 
 #endif

@@ -19,6 +19,9 @@
 #define MAX_TRY_WAIT_TIME_S (1) //seconds
 #define MAX_TRY_WAIT_TIME_US (0) //micro-seconds
 
+#define MAX_RECV_WAIT_TIME_S (10) //seconds
+#define MAX_RECV_WAIT_TIME_US (0) //micro-seconds
+
 #define RECEIVED_PKT (1)
 
 #define INIT_DATA_SIZE 1400
@@ -28,6 +31,7 @@ typedef struct {
   char filename[255]; //magic number
   uint32_t buffsize;
   server *OG_Server;
+  double error_rate;
 }server_info;
 
 #define ERROR_PERCENT_ARGC 1
@@ -37,7 +41,7 @@ typedef struct {
 void *thread_server(void *argument);
 
 // Sends the ACK of initiate_connection() from client w/ new socke info.
-void establish_connection(server *Old_Server, server* New_Server, rcp_pkt *Send_Pkt);
+rcp_pkt *establish_connection(server *Old_Server, server* New_Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt);
 
 
 // Respond that there was a file error
@@ -60,7 +64,6 @@ rcp_pkt *try_send(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, exp_ops 
 void handle_args(double *error_rate, int argc, char *argv[]);
 
 
-
-
+rcp_pkt *try_recv(server *Server, rcp_pkt *Recv_Pkt, exp_ops ops);
 
 #endif 
