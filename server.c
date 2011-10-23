@@ -85,6 +85,7 @@ void *thread_server(void *Info)
 	  Server->seq = 3;
 	  if(transfer_file_setup(Server, Send_Pkt, Recv_Pkt) != NULL)
 	    transfer_file(Server, Send_Pkt, Recv_Pkt, file);
+	      
 	  fclose(file);
 	}
       else
@@ -143,18 +144,20 @@ void transfer_file(server *Server, rcp_pkt *Send_Pkt, rcp_pkt *Recv_Pkt, FILE *f
   exp_ops ops;
   uint8_t *data;
   uint32_t data_len = 0;
+  int break_flag = TRUE;
   
   ops.num_ops = 1;
   ops.opcode[0] = (OP_FIL|OP_ACK);
   data = s_malloc(Server->buffsize);
 
-  while (!feof(fp))
+  while (!feof(fp) && break_flag)
     {
       data_len = fread(data, 1, Server->buffsize, fp);
       if (!ferror(fp))
 	{
 	  create_pkt(Send_Pkt, (OP_FIL|OP_SYN), Server->seq, data, data_len);
-	  try_send(Server, Send_Pkt, Recv_Pkt, ops);
+	  if(try_send(Server, Send_Pkt, Recv_Pkt, ops) == NULL)
+	    break_flag = FALSE;
 	}
       else
 	break;
